@@ -1,1 +1,8 @@
-[].
+{"1.2.0",
+[{<<"json_polyfill">>,{pkg,<<"json_polyfill">>,<<"0.1.0">>},0}]}.
+[
+{pkg_hash,[
+ {<<"json_polyfill">>, <<"6A98A0C6917F39C0FD26761C5A4C40E83FC02127799C8400FA78264A7481CFD0">>}]},
+{pkg_hash_ext,[
+ {<<"json_polyfill">>, <<"6603FF9F08F6BB75E2BCE1723389BC8B45D086CD003950B3E35152716DE38FD9">>}]}
+].
