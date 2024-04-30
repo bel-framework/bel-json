@@ -79,7 +79,11 @@ encode_to_iodata(Term, Opts) when is_map(Opts) ->
 %%%=====================================================================
 
 parse_opts(Opts) ->
-    Escape = fun json:encode_binary/1,
+    % TODO: Escape html, javascript, and unicode.
+    Escape = case maps:get(escape, Opts, json) of
+        json ->
+            fun json:encode_binary/1
+    end,
     UnsupportedTypeError = fun(Unsupported, _Encode) ->
         unsupported_type_error(Unsupported)
     end,
