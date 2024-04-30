@@ -21,7 +21,7 @@
 %%%---------------------------------------------------------------------
 -module(bel_json_encoder).
 
--compile({inline, [do_encode/3, traverse_codecs/4]}).
+-compile({inline, [do_encode/3, traverse_codecs/5]}).
 
 % API functions
 -export([ encode/1
@@ -50,6 +50,7 @@
 
 -record(state, {
     escape,
+    encode_list,
     encode_tuple
 }).
 
@@ -79,23 +80,40 @@ encode_to_iodata(Term, Opts) when is_map(Opts) ->
 
 parse_opts(Opts) ->
     Escape = fun json:encode_binary/1,
-    TupleCodecs = normalize_tuple_codecs(maps:get(tuple_codecs, Opts, [])),
+    UnsupportedTypeError = fun(Unsupported, _Encode) ->
+        unsupported_type_error(Unsupported)
+    end,
     #state{
         escape = Escape,
-        encode_tuple = fun(Term, Encode) ->
-            traverse_codecs(TupleCodecs, Term, Escape, Encode)
-        end
+        encode_list = encode_callback(
+            normalize_list_codecs(maps:get(list_codecs, Opts, [])),
+            Escape, fun json:encode_list/2
+        ),
+        encode_tuple = encode_callback(
+            normalize_tuple_codecs(maps:get(tuple_codecs, Opts, [])),
+            Escape, UnsupportedTypeError
+        )
     }.
 
-traverse_codecs([{Codec, Opts} | Codecs], Term, Escape, Encode) ->
+encode_callback([], _Escape, Next) when is_function(Next, 2) ->
+    Next;
+encode_callback(Codecs, Escape, Next) ->
+    fun(Term, Encode) ->
+        traverse_codecs(Codecs, Term, Escape, Encode, Next)
+    end.
+
+traverse_codecs([{Codec, Opts} | Codecs], Term, Escape, Encode, Next) ->
     case Codec(Term, Opts, Escape, Encode) of
         next ->
-            traverse_codecs(Codecs, Term, Escape, Encode);
+            traverse_codecs(Codecs, Term, Escape, Encode, Next);
         {halt, NewTerm} ->
             NewTerm
     end;
-traverse_codecs([], Other, _Escape, _Encode) ->
-    error({unsupported_type, Other}).
+traverse_codecs([], Term, _Escape, Encode, Next) ->
+    Next(Term, Encode).
+
+unsupported_type_error(Unsupported) ->
+    error({unsupported_type, Unsupported}).
 
 do_encode(Term, State) ->
     json:encode(Term, fun(X, Encode) -> do_encode(X, Encode, State) end).
@@ -108,14 +126,46 @@ do_encode(Int, _Encode, _State) when is_integer(Int) ->
     json:encode_integer(Int);
 do_encode(Float, _Encode, _State) when is_float(Float) ->
     json:encode_float(Float);
-do_encode(List, Encode, _State) when is_list(List) ->
-    json:encode_list(List, Encode);
+do_encode(List, Encode, State) when is_list(List) ->
+    (State#state.encode_list)(List, Encode);
 do_encode(Map, Encode, _State) when is_map(Map) ->
     json:encode_map(Map, Encode);
 do_encode(Tuple, Encode, State) when is_tuple(Tuple) ->
     (State#state.encode_tuple)(Tuple, Encode);
 do_encode(Unsupported, _Encode, _State) ->
-    error({unsupported_type, Unsupported}).
+    unsupported_type_error(Unsupported).
+
+%%%=====================================================================
+%%% List codecs
+%%%=====================================================================
+
+normalize_list_codecs(Codecs) ->
+    lists:map(fun
+        (proplist) ->
+            {fun proplist_list_codec/4, fun is_proplist/1};
+        ({proplist, IsProplist}) when is_function(IsProplist, 1) ->
+            {fun proplist_list_codec/4, IsProplist};
+        (Fun) when ?is_codec_fun(Fun) ->
+            {Fun, ?DEFAULT_OPTS};
+        ({Fun, Opts}) when ?is_codec_fun(Fun) ->
+            {Fun, Opts}
+    end, Codecs).
+
+is_proplist(List) ->
+    lists:all(fun is_proplist_prop/1, List).
+
+is_proplist_prop({Key, _}) ->
+    is_binary(Key) orelse is_atom(Key) orelse is_integer(Key);
+is_proplist_prop(Key) ->
+    is_binary(Key) orelse is_atom(Key).
+
+proplist_list_codec(List, IsProplist, _Escape, Encode) ->
+    case IsProplist(List) of
+        true ->
+            {halt, Encode(proplists:to_map(List), Encode)};
+        false ->
+            next
+    end.
 
 %%%=====================================================================
 %%% Tuple codecs
@@ -210,8 +260,19 @@ record_tuple_codec(_, _, _, _) ->
 
 -ifdef(TEST).
 
+list_codecs_test() ->
+    [ { "proplist"
+      , ?assertEqual(
+            <<"{\"foo\":\"foo\",\"bar\":true}">>,
+            encode(
+                [{foo, foo}, bar],
+                #{list_codecs => [proplist]}
+            )
+        )}
+    ].
+
 -record(foo, {foo, bar}).
-encode_test() ->
+tuple_codecs_test() ->
     [ { "datetime"
       , ?assertEqual(
             <<"{\"foo\":\"2024-04-29T22:34:35Z\"}">>,
