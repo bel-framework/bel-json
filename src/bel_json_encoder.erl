@@ -50,6 +50,7 @@
 
 -record(state, {
     escape,
+    encode_atom,
     encode_list,
     encode_tuple
 }).
@@ -85,6 +86,13 @@ parse_opts(Opts) ->
     end,
     #state{
         escape = Escape,
+        encode_atom = case maps:get(null_values, Opts, [null]) of
+            [null] ->
+                fun json:encode_atom/2;
+            NullValues when is_list(NullValues) ->
+                Nulls = maps:from_keys(NullValues, null),
+                fun(Atom, _Encode) -> encode_atom(Atom, Nulls, Escape) end
+        end,
         encode_list = encode_callback(
             normalize_list_codecs(maps:get(list_codecs, Opts, [])),
             Escape, fun json:encode_list/2
@@ -118,8 +126,8 @@ unsupported_type_error(Unsupported) ->
 do_encode(Term, State) ->
     json:encode(Term, fun(X, Encode) -> do_encode(X, Encode, State) end).
 
-do_encode(Atom, Encode, _State) when is_atom(Atom) ->
-    json:encode_atom(Atom, Encode);
+do_encode(Atom, Encode, #state{encode_atom = EncodeAtom}) when is_atom(Atom) ->
+    EncodeAtom(Atom, Encode);
 do_encode(Bin, _Encode, #state{escape = Escape}) when is_binary(Bin) ->
     Escape(Bin);
 do_encode(Int, _Encode, _State) when is_integer(Int) ->
@@ -134,6 +142,15 @@ do_encode(Tuple, Encode, State) when is_tuple(Tuple) ->
     (State#state.encode_tuple)(Tuple, Encode);
 do_encode(Unsupported, _Encode, _State) ->
     unsupported_type_error(Unsupported).
+
+encode_atom(true, _Nulls, _Escape) ->
+    <<"true">>;
+encode_atom(false, _Nulls, _Escape) ->
+    <<"false">>;
+encode_atom(Atom, Nulls, _Escape) when is_map_key(Atom, Nulls) ->
+    <<"null">>;
+encode_atom(Atom, _Nulls, Escape) ->
+    Escape(atom_to_binary(Atom, utf8)).
 
 %%%=====================================================================
 %%% List codecs
@@ -259,6 +276,15 @@ record_tuple_codec(_, _, _, _) ->
 %%%=====================================================================
 
 -ifdef(TEST).
+
+null_values_test() ->
+    ?assertEqual(
+        <<"[\"foo\",null,null,\"bar\"]">>,
+        encode(
+            [foo, null, undefined, bar],
+            #{null_values => [null, undefined]}
+        )
+    ).
 
 list_codecs_test() ->
     [ { "proplist"
