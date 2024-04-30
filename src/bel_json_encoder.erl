@@ -1,7 +1,7 @@
 %%%---------------------------------------------------------------------
 %%% @copyright 2024 William Fank Thomé
 %%% @author William Fank Thomé <willilamthome@hotmail.com>
-%%% @doc JSON parser and generator.
+%%% @doc JSON encoder.
 %%%
 %%% Copyright 2024 William Fank Thomé
 %%%
@@ -19,20 +19,17 @@
 %%%
 %%% @end
 %%%---------------------------------------------------------------------
--module(bel_json).
+-module(bel_json_encoder).
 
 % API functions
--export([ encode/1, decode/1 ]).
+-export([ encode/1 ]).
 
 %%%=====================================================================
 %%% API functions
 %%%=====================================================================
 
 encode(Term) ->
-    bel_json_encoder:encode(Term).
-
-decode(Bin) ->
-    bel_json_decoder:decode(Bin).
+    json:encode(Term).
 
 %%%=====================================================================
 %%% Internal functions
