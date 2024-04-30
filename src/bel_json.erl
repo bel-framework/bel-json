@@ -22,7 +22,7 @@
 -module(bel_json).
 
 % API functions
--export([ encode/1, decode/1 ]).
+-export([ encode/1, encode/2, decode/1 ]).
 
 %%%=====================================================================
 %%% API functions
@@ -30,6 +30,9 @@
 
 encode(Term) ->
     bel_json_encoder:encode(Term).
+
+encode(Term, Opts) ->
+    bel_json_encoder:encode(Term, Opts).
 
 decode(Bin) ->
     bel_json_decoder:decode(Bin).
