@@ -48,12 +48,11 @@
     is_integer(X) andalso X >= Min andalso X =< Max)
 ).
 
--record(state, {
-    escape,
-    encode_atom,
-    encode_list,
-    encode_tuple
-}).
+-record(state, { escape
+               , encode_atom
+               , encode_list
+               , encode_tuple
+               }).
 
 %%%=====================================================================
 %%% API functions
@@ -126,20 +125,20 @@ unsupported_type_error(Unsupported) ->
 do_encode(Term, State) ->
     json:encode(Term, fun(X, Encode) -> do_encode(X, Encode, State) end).
 
-do_encode(Atom, Encode, #state{encode_atom = EncodeAtom}) when is_atom(Atom) ->
-    EncodeAtom(Atom, Encode);
+do_encode(Atom, Encode, #state{encode_atom = Do}) when is_atom(Atom) ->
+    Do(Atom, Encode);
 do_encode(Bin, _Encode, #state{escape = Escape}) when is_binary(Bin) ->
     Escape(Bin);
 do_encode(Int, _Encode, _State) when is_integer(Int) ->
     json:encode_integer(Int);
 do_encode(Float, _Encode, _State) when is_float(Float) ->
     json:encode_float(Float);
-do_encode(List, Encode, State) when is_list(List) ->
-    (State#state.encode_list)(List, Encode);
+do_encode(List, Encode, #state{encode_list = Do}) when is_list(List) ->
+    Do(List, Encode);
 do_encode(Map, Encode, _State) when is_map(Map) ->
     json:encode_map(Map, Encode);
-do_encode(Tuple, Encode, State) when is_tuple(Tuple) ->
-    (State#state.encode_tuple)(Tuple, Encode);
+do_encode(Tuple, Encode, #state{encode_tuple = Do}) when is_tuple(Tuple) ->
+    Do(Tuple, Encode);
 do_encode(Unsupported, _Encode, _State) ->
     unsupported_type_error(Unsupported).
 
