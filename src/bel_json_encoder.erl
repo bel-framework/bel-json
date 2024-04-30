@@ -21,7 +21,7 @@
 %%%---------------------------------------------------------------------
 -module(bel_json_encoder).
 
--compile({inline, [do_encode/3, traverse_codecs/3]}).
+-compile({inline, [do_encode/3, traverse_codecs/4]}).
 
 % API functions
 -export([ encode/1
@@ -37,7 +37,7 @@
 -define(DEFAULT_OPTS, #{}).
 
 -define(is_codec_fun(X), (
-    is_function(X, 3)
+    is_function(X, 4)
 )).
 
 -define(min(X, Min), (
@@ -82,41 +82,20 @@ parse_opts(Opts) ->
     TupleCodecs = normalize_tuple_codecs(maps:get(tuple_codecs, Opts, [])),
     #state{
         escape = Escape,
-        encode_tuple = fun(Term) ->
-            traverse_codecs(TupleCodecs, Term, Escape)
+        encode_tuple = fun(Term, Encode) ->
+            traverse_codecs(TupleCodecs, Term, Escape, Encode)
         end
     }.
 
-normalize_tuple_codecs(Codecs) ->
-    lists:map(fun
-        (datetime) ->
-            {fun datetime_tuple_codec/3, ?DEFAULT_OPTS};
-        (Fun) when ?is_codec_fun(Fun) ->
-            {Fun, ?DEFAULT_OPTS};
-        ({Fun, Opts}) when ?is_codec_fun(Fun) ->
-            {Fun, Opts}
-    end, Codecs).
-
-traverse_codecs([{Codec, Opts} | Codecs], Term, Escape) ->
-    case Codec(Term, Opts, Escape) of
+traverse_codecs([{Codec, Opts} | Codecs], Term, Escape, Encode) ->
+    case Codec(Term, Opts, Escape, Encode) of
         next ->
-            traverse_codecs(Codecs, Term, Escape);
+            traverse_codecs(Codecs, Term, Escape, Encode);
         {halt, NewTerm} ->
             NewTerm
     end;
-traverse_codecs([], Other, _Escape) ->
+traverse_codecs([], Other, _Escape, _Encode) ->
     error({unsupported_type, Other}).
-
-datetime_tuple_codec({{YYYY, MM, DD}, {H, M, S}}, _Opts, Escape)
-  when ?min(YYYY, 0), ?in_range(MM, 1, 12), ?in_range(DD, 1, 31)
-     , ?in_range(H, 0, 23), ?in_range(M, 0, 59), ?in_range(S, 0, 59) ->
-    Term = iolist_to_binary(io_lib:format(
-        "~4.10.0B-~2.10.0B-~2.10.0BT~2.10.0B:~2.10.0B:~2.10.0BZ",
-        [YYYY,MM,DD,H,M,S])
-    ),
-    {halt, Escape(Term)};
-datetime_tuple_codec(_Term, _Opts, _Escape) ->
-    next.
 
 do_encode(Term, State) ->
     json:encode(Term, fun(X, Encode) -> do_encode(X, Encode, State) end).
@@ -133,10 +112,97 @@ do_encode(List, Encode, _State) when is_list(List) ->
     json:encode_list(List, Encode);
 do_encode(Map, Encode, _State) when is_map(Map) ->
     json:encode_map(Map, Encode);
-do_encode(Tuple, _Encode, #state{encode_tuple = Encode}) when is_tuple(Tuple) ->
-    Encode(Tuple);
+do_encode(Tuple, Encode, State) when is_tuple(Tuple) ->
+    (State#state.encode_tuple)(Tuple, Encode);
 do_encode(Unsupported, _Encode, _State) ->
     error({unsupported_type, Unsupported}).
+
+%%%=====================================================================
+%%% Tuple codecs
+%%%=====================================================================
+
+normalize_tuple_codecs(Codecs) ->
+    lists:map(fun
+        (datetime) ->
+            {fun datetime_tuple_codec/4, ?DEFAULT_OPTS};
+        (timestamp) ->
+            {fun timestamp_tuple_codec/4, ?DEFAULT_OPTS};
+        (ipv4) ->
+            {fun ipv4_tuple_codec/4, ?DEFAULT_OPTS};
+        (ipv6) ->
+            {fun ipv6_tuple_codec/4, ?DEFAULT_OPTS};
+        ({record, RecordsList}) when is_list(RecordsList) ->
+            Records = maps:from_list([
+                {Name, {length(Fields)+1, Fields}}
+                || {Name, Fields} <- RecordsList
+            ]),
+            {fun record_tuple_codec/4, Records};
+        (Fun) when ?is_codec_fun(Fun) ->
+            {Fun, ?DEFAULT_OPTS};
+        ({Fun, Opts}) when ?is_codec_fun(Fun) ->
+            {Fun, Opts}
+    end, Codecs).
+
+datetime_tuple_codec({{YYYY, MM, DD}, {H, M, S}}, _Opts, Escape, _Encode)
+  when ?min(YYYY, 0), ?in_range(MM, 1, 12), ?in_range(DD, 1, 31)
+     , ?in_range(H, 0, 23), ?in_range(M, 0, 59), ?in_range(S, 0, 59) ->
+    Datetime = iolist_to_binary(io_lib:format(
+        "~4.10.0B-~2.10.0B-~2.10.0BT~2.10.0B:~2.10.0B:~2.10.0BZ",
+        [YYYY,MM,DD,H,M,S])
+    ),
+    {halt, Escape(Datetime)};
+datetime_tuple_codec(_, _, _, _) ->
+    next.
+
+timestamp_tuple_codec({MegaSecs, Secs, MicroSecs} = Timestamp, _Opts, Escape, _Encode)
+  when ?min(MegaSecs, 0), ?min(Secs, 0), ?min(MicroSecs, 0) ->
+    MilliSecs = MicroSecs div 1000,
+    {{YYYY,MM,DD},{H,M,S}} = calendar:now_to_datetime(Timestamp),
+    DateTime = iolist_to_binary(io_lib:format(
+        "~4.10.0B-~2.10.0B-~2.10.0BT~2.10.0B:~2.10.0B:~2.10.0B.~3.10.0BZ",
+        [YYYY,MM,DD,H,M,S,MilliSecs])
+    ),
+    {halt, Escape(DateTime)};
+timestamp_tuple_codec(_, _, _, _) ->
+    next.
+
+ipv4_tuple_codec({_A,_B,_C,_D} = Tuple, _Opts, Escape, _Encode) ->
+    case inet_parse:ntoa(Tuple) of
+        {error, einval} ->
+            next;
+        Ipv4 ->
+            {halt, Escape(list_to_binary(Ipv4))}
+    end;
+ipv4_tuple_codec(_, _, _, _) ->
+    next.
+
+ipv6_tuple_codec({_A,_B,_C,_D,_E,_F,_G,_H} = Tuple, _Opts, Escape, _Encode) ->
+    case inet_parse:ntoa(Tuple) of
+        {error, einval} ->
+            next;
+        Ipv6 ->
+            {halt, Escape(list_to_binary(Ipv6))}
+    end;
+ipv6_tuple_codec(_, _, _, _) ->
+    next.
+
+record_tuple_codec(Tuple, Records, _Escape, Encode) when tuple_size(Tuple) > 1 ->
+    Name = element(1, Tuple),
+    case Records of
+        #{Name := {Size, Keys}} ->
+            case tuple_size(Tuple) =:= Size of
+                true ->
+                    [Name | Values] = tuple_to_list(Tuple),
+                    Proplist = lists:zip(Keys, Values),
+                    {halt, Encode(proplists:to_map(Proplist), Encode)};
+                false ->
+                    next
+            end;
+        #{} ->
+            next
+    end;
+record_tuple_codec(_, _, _, _) ->
+    next.
 
 %%%=====================================================================
 %%% Tests
@@ -144,13 +210,50 @@ do_encode(Unsupported, _Encode, _State) ->
 
 -ifdef(TEST).
 
+-record(foo, {foo, bar}).
 encode_test() ->
-    ?assertEqual(
-        <<"{\"foo\":\"2024-04-29T22:34:35Z\"}">>,
-        encode(
-            #{foo => {{2024,04,29},{22,34,35}}},
-            #{tuple_codecs => [datetime]}
-        )
-    ).
+    [ { "datetime"
+      , ?assertEqual(
+            <<"{\"foo\":\"2024-04-29T22:34:35Z\"}">>,
+            encode(
+                #{foo => {{2024,04,29},{22,34,35}}},
+                #{tuple_codecs => [datetime]}
+            )
+        )}
+    , { "timestamp"
+      , ?assertEqual(
+            <<"\"1970-01-01T00:00:00.000Z\"">>,
+            encode(
+                {0,0,0},
+                #{tuple_codecs => [timestamp]}
+            )
+        )}
+    , { "ipv4"
+      , ?assertEqual(
+            <<"\"0.0.0.0\"">>,
+            encode(
+                {0,0,0,0},
+                #{tuple_codecs => [ipv4]}
+            )
+        )}
+    , { "ipv6"
+      , ?assertEqual(
+            <<"\"fe80::204:acff:fe17:bf38\"">>,
+            encode(
+                {16#fe80,0,0,0,16#204,16#acff,16#fe17,16#bf38},
+                #{tuple_codecs => [ipv6]}
+            )
+        )}
+    , { "record"
+      , ?assertEqual(
+            <<"{\"foo\":\"foo\",\"bar\":\"bar\"}">>,
+            encode(
+                #foo{foo = foo, bar = bar},
+                #{tuple_codecs => [{record, [
+                    {foo, record_info(fields, foo)}
+                ]}]}
+            )
+        )}
+    ].
 
 -endif.
