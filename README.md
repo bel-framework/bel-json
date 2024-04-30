@@ -1,9 +1,23 @@
-bel_json
-=====
+# bel-framework/bel-json
 
-An OTP library
+An JSON parser and generator lib for OTP.
 
-Build
------
+## Encode
 
-    $ rebar3 compile
+```erlang
+1> iolist_to_binary(bel_json:encode(#{foo => bar})).
+<<"{\"foo\":\"bar\"}">>
+```
+
+## Decode
+
+```erlang
+3> bel_json:decode(<<"{\"foo\":\"bar\"}">>).
+#{<<"foo">> => <<"bar">>}
+```
+
+## Build
+
+```shell
+$ rebar3 compile
+```
