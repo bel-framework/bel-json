@@ -1,5 +1,5 @@
 {application, bel_json, [
-    {description, "An JSON parser and generator lib for OTP"},
+    {description, "JSON encoder and decoder for OTP"},
     {vsn, "0.1.0"},
     {registered, []},
     {applications, [
